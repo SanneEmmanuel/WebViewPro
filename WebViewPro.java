@@ -10,21 +10,28 @@ import android.os.Build;
 import android.os.Environment;
 import android.util.AttributeSet;
 import android.view.View;
-import android.webkit.*;
 import android.widget.RelativeLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
-
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+import android.webkit.*;
 
 public class WebViewPro extends RelativeLayout {
 
     private WebView webView;
     private ProgressBar progressBar;
-    private SwipeRefreshLayout swipeRefreshLayout;
     private ValueCallback<Uri[]> filePathCallback;
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private Activity activity;
+
+    // Custom refresh view
+    private RelativeLayout refreshContainer;
+    private View refreshIndicator;
+    private boolean isRefreshing = false;
+    private OnRefreshListener onRefreshListener;
+
+    public interface OnRefreshListener {
+        void onRefresh();
+    }
 
     public WebViewPro(Context context) {
         this(context, null, null);
@@ -51,14 +58,23 @@ public class WebViewPro extends RelativeLayout {
     private void initialize(Context context, String urlToLoad) {
         setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
-        // === Pull to Refresh ===
-        swipeRefreshLayout = new SwipeRefreshLayout(context);
-        swipeRefreshLayout.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+        // === Custom Pull to Refresh ===
+        refreshContainer = new RelativeLayout(context);
+        refreshContainer.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+
+        // Simple refresh indicator (could be replaced with any custom animation or view)
+        refreshIndicator = new ProgressBar(context);
+        LayoutParams indicatorParams = new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
+        indicatorParams.addRule(CENTER_HORIZONTAL);
+        indicatorParams.topMargin = 40;
+        refreshIndicator.setLayoutParams(indicatorParams);
+        refreshIndicator.setVisibility(GONE);
+        refreshContainer.addView(refreshIndicator);
 
         // === WebView ===
         webView = new WebView(context);
         webView.setLayoutParams(new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-        swipeRefreshLayout.addView(webView);
+        refreshContainer.addView(webView);
 
         // === ProgressBar ===
         progressBar = new ProgressBar(context);
@@ -67,12 +83,12 @@ public class WebViewPro extends RelativeLayout {
         progressBar.setLayoutParams(pbParams);
         progressBar.setVisibility(GONE);
 
-        addView(swipeRefreshLayout);
+        addView(refreshContainer);
         addView(progressBar);
 
         setupWebViewSettings(context);
         setupWebViewClients(context);
-        setupSwipeToRefresh();
+        setupCustomPullToRefresh();
 
         // Load initial URL or fallback to local file
         String url = (urlToLoad != null && !urlToLoad.trim().isEmpty())
@@ -107,7 +123,7 @@ public class WebViewPro extends RelativeLayout {
 
             @Override public void onPageFinished(WebView view, String url) {
                 progressBar.setVisibility(GONE);
-                swipeRefreshLayout.setRefreshing(false);
+                setRefreshing(false); // Stop refresh indicator
             }
 
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
@@ -170,8 +186,50 @@ public class WebViewPro extends RelativeLayout {
         });
     }
 
-    private void setupSwipeToRefresh() {
-        swipeRefreshLayout.setOnRefreshListener(() -> webView.reload());
+    // Minimal pull-to-refresh: pulls down to reload if scrolled to top.
+    private void setupCustomPullToRefresh() {
+        // Listen for touch events to trigger a manual refresh (simple version)
+        webView.setOnTouchListener(new OnTouchListener() {
+            private float startY = 0;
+            @Override
+            public boolean onTouch(View v, android.view.MotionEvent event) {
+                switch (event.getAction()) {
+                    case android.view.MotionEvent.ACTION_DOWN:
+                        startY = event.getY();
+                        break;
+                    case android.view.MotionEvent.ACTION_UP:
+                        float endY = event.getY();
+                        if (endY - startY > 120 && webView.getScrollY() == 0) { // Pull down threshold
+                            triggerRefresh();
+                            return true;
+                        }
+                        break;
+                }
+                return false;
+            }
+        });
+        setOnRefreshListener(new OnRefreshListener() {
+            @Override
+            public void onRefresh() {
+                webView.reload();
+            }
+        });
+    }
+
+    private void triggerRefresh() {
+        setRefreshing(true);
+        if (onRefreshListener != null) {
+            onRefreshListener.onRefresh();
+        }
+    }
+
+    public void setOnRefreshListener(OnRefreshListener listener) {
+        this.onRefreshListener = listener;
+    }
+
+    public void setRefreshing(boolean refreshing) {
+        isRefreshing = refreshing;
+        refreshIndicator.setVisibility(refreshing ? VISIBLE : GONE);
     }
 
     private boolean handleCustomScheme(String url, Context context) {
